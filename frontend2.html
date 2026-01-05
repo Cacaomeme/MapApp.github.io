@@ -335,8 +335,20 @@
            return;
        }
 
+       // トークンから自分のIDを取り出す（バックエンドの閲覧制限判定用）
+       let myUserId = null;
        try {
-           const res = await fetch(API_URL, {
+           const payload = parseJwt(idToken);
+           myUserId = payload.sub;
+       } catch (e) {
+           console.warn("Failed to parse idToken", e);
+       }
+
+       try {
+           // ★変更: userId をクエリで渡す
+           const url = myUserId ? `${API_URL}?userId=${encodeURIComponent(myUserId)}` : API_URL;
+
+           const res = await fetch(url, {
                method: "GET", // 明示的に書く
                headers: {
                    // ★追加: ここで鍵を渡す
@@ -344,12 +356,57 @@
                }
            });
 
+           // ★変更: 403(投稿なし/閲覧制限)の場合の処理
+           if (res.status === 403) {
+               document.getElementById("post-list").innerHTML = `
+                   <div style="text-align:center; padding:30px; background:#fff3cd; border:1px solid #ffeeba; border-radius:8px;">
+                       <h3 style="color:#856404;">🔒 閲覧制限</h3>
+                       <p>マップを見るには、24時間以内に1回以上投稿する必要があります。</p>
+                       <p>まずは「＋」ボタンから投稿してみましょう！</p>
+                   </div>
+               `;
+
+               allPosts = [];
+               markersMap = {};
+               if (map && window.L) {
+                   map.eachLayer((layer) => {
+                       if (layer instanceof L.Marker || layer instanceof L.CircleMarker) {
+                           map.removeLayer(layer);
+                       }
+                   });
+               }
+               return;
+           }
+
            if (res.status === 401) throw new Error("認証エラー: ログインし直してください");
            if (!res.ok) throw new Error("取得失敗");
            
            const posts = await res.json();
            
            allPosts = posts.sort((a, b) => parseInt(b.Timestamp) - parseInt(a.Timestamp));
+
+           // ★変更: いったん地図上のピンを全削除して再描画（重複防止）
+           markersMap = {};
+           if (map && window.L) {
+               map.eachLayer((layer) => {
+                   if (layer instanceof L.Marker || layer instanceof L.CircleMarker) {
+                       map.removeLayer(layer);
+                   }
+               });
+
+               // 現在地の円だけ再描画（座標は常にあるので、デフォルトでも表示されます）
+               if (currentLat && currentLng) {
+                   L.circleMarker([currentLat, currentLng], {
+                       radius: 15,
+                       fillColor: "#3388ff",
+                       color: "#ffffff",
+                       weight: 5,
+                       opacity: 1,
+                       fillOpacity: 0.7
+                   }).addTo(map);
+               }
+           }
+
            allPosts.forEach(post => addMarkerToMap(post));
            displayPostList();
        } catch (err) {
@@ -454,36 +511,20 @@
            });
 
            if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
-           const data = await res.json();
-           
-           // 新しい投稿オブジェクト (UserNameを含める)
-           const newPost = {
-               UserID: uid,
-               UserName: uName, // ★表示用に名前をセット
-               Message: msg,
-               Latitude: currentLat,
-               Longitude: currentLng,
-               ImageURL: data.url || base64Img,
-               Timestamp: Math.floor(Date.now() / 1000).toString()
-           };
 
-           allPosts.unshift(newPost);
-           addMarkerToMap(newPost);
-           currentPage = 1;
-           displayPostList();
+           // レスポンスの本文がある場合に備えて消費（なくてもOK）
+           try { await res.json(); } catch (_) {}
+
+           alert("投稿しました！マップを更新します。");
 
            // フォームリセット
            messageForm.style.display = "none";
            toggleFormBtn.textContent = "+";
            document.getElementById("msg").value = "";
            document.getElementById("imageInput").value = "";
-         
-           // 自分の投稿へ移動
-           const markerKey = newPost.UserID + newPost.Timestamp;
-           if (map && markersMap[markerKey]) {
-               map.setView([newPost.Latitude, newPost.Longitude], 16);
-               markersMap[markerKey].openPopup();
-           }
+
+           // ★重要: 投稿直後にサーバーから最新データ（他人の投稿含む）を取り直す
+           await fetchAllPosts();
 
        } catch (err) {
            alert("エラー: " + err.message);
