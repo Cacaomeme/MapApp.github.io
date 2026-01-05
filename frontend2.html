@@ -229,7 +229,8 @@
       const port = location.port ? `:${location.port}` : "";
       const to = `${location.protocol}//localhost${port}${location.pathname}${location.search}${location.hash}`;
       location.replace(to);
-      return;
+            // NOTE: トップレベルでは return できないため、ここで終了はしない。
+            // location.replace() により遷移するので、以降の処理は実質的に実行されません。
     }
 
    /* ===============================================================
