@@ -249,9 +249,26 @@
    const sendBtn = document.getElementById("sendBtn");
    const statusEl = document.getElementById("status");
 
-   // 地図初期化
-   const map = L.map("map").setView([currentLat, currentLng], 13);
-   L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { attribution: "© CARTO" }).addTo(map);
+     // 初期UI（位置情報の成否に依存しない）
+     if (idToken) {
+         sendBtn.disabled = false;
+         sendBtn.innerText = "投稿する";
+     } else {
+         sendBtn.disabled = true;
+         sendBtn.innerText = "ログインして投稿";
+     }
+
+     // 地図初期化（Leafletが読み込めていない場合に落ちないようガード）
+     let map = null;
+     if (!window.L) {
+         if (statusEl) {
+             statusEl.textContent = "地図(Leaflet)の読み込みに失敗しました。通信環境/広告ブロックを確認し、コンソールのエラーをご確認ください。";
+         }
+         console.error("Leaflet (window.L) is not available");
+     } else {
+         map = L.map("map").setView([currentLat, currentLng], 13);
+         L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { attribution: "© CARTO" }).addTo(map);
+     }
 
    /* --- 変数の追加 --- */
    let allPosts = [];      // 取得した全データを保持する配列
@@ -342,13 +359,13 @@
    }
 
    // 2. 位置情報の取得
-   if (navigator.geolocation) {
+   if (map && navigator.geolocation) {
        navigator.geolocation.getCurrentPosition(pos => {
            currentLat = pos.coords.latitude;
            currentLng = pos.coords.longitude;
            map.setView([currentLat, currentLng], 15);
 
-           L.circleMarker([currentLat, currentLng], {
+           if (window.L) L.circleMarker([currentLat, currentLng], {
                radius: 15, fillColor: "#3388ff", color: "#ffffff",
                weight: 5, opacity: 1, fillOpacity: 0.7
            }).addTo(map);
@@ -364,6 +381,11 @@
        }, () => {
            statusEl.textContent = "位置情報が取得できません。デフォルト位置を使用します。";
        });
+   } else if (!navigator.geolocation) {
+       if (statusEl) statusEl.textContent = "このブラウザは位置情報に対応していません。デフォルト位置を使用します。";
+   } else if (!map) {
+       // map が初期化できていない（Leaflet未読込など）
+       // status は上で出しているのでここでは何もしない
    }
 
    // 3. 画像処理
@@ -457,7 +479,7 @@
          
            // 自分の投稿へ移動
            const markerKey = newPost.UserID + newPost.Timestamp;
-           if (markersMap[markerKey]) {
+           if (map && markersMap[markerKey]) {
                map.setView([newPost.Latitude, newPost.Longitude], 16);
                markersMap[markerKey].openPopup();
            }
@@ -521,6 +543,7 @@
        `;
      
        div.onclick = () => {
+           if (!map) return;
            map.setView([post.Latitude, post.Longitude], 16, { animate: true, duration: 1.0 });
            const markerKey = post.UserID + post.Timestamp;
            if (markersMap[markerKey]) markersMap[markerKey].openPopup();
@@ -530,6 +553,7 @@
    }
 
    function addMarkerToMap(post) {
+       if (!map || !window.L) return;
        const hueShift = getHueRotation(post.UserID);
        const dateStr = post.Timestamp ? new Date(parseInt(post.Timestamp) * 1000).toLocaleString("ja-JP") : "不明";
        const displayName = post.UserName || post.UserID || "名無し"; // ★マップのポップアップも名前対応
@@ -562,21 +586,23 @@
    }
 
    /* --- UI制御その他 --- */
-   // 現在地へ戻るボタン
-   const HomeControl = L.Control.extend({
-       options: { position: 'topleft' },
-       onAdd: function (map) {
-           const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
-           container.innerHTML = `<a href="#" style="width:30px;height:30px;line-height:30px;display:block;text-align:center;background:white;"><svg viewBox="0 0 24 24" width="18" height="18" style="vertical-align:middle;"><path fill="currentColor" d="M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M3.05,13H1V11H3.05C3.5,6.83 6.83,3.5 11,3.05V1H13V3.05C17.17,3.5 20.5,6.83 20.95,11H23V13H20.95C20.5,17.17 17.17,20.5 13,20.95V23H11V20.95C6.83,20.5 3.5,17.17 3.05,13Z" /></svg></a>`;
-           container.onclick = (e) => {
-               e.preventDefault(); e.stopPropagation();
-               if (currentLat && currentLng) map.setView([currentLat, currentLng], 16, { animate: true });
-               else alert("現在地を取得中です...");
-           };
-           return container;
-       }
-   });
-   map.addControl(new HomeControl());
+   // 現在地へ戻るボタン（地図が初期化できているときのみ）
+   if (map && window.L) {
+     const HomeControl = L.Control.extend({
+         options: { position: 'topleft' },
+         onAdd: function (map) {
+             const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
+             container.innerHTML = `<a href="#" style="width:30px;height:30px;line-height:30px;display:block;text-align:center;background:white;"><svg viewBox="0 0 24 24" width="18" height="18" style="vertical-align:middle;"><path fill="currentColor" d="M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M3.05,13H1V11H3.05C3.5,6.83 6.83,3.5 11,3.05V1H13V3.05C17.17,3.5 20.5,6.83 20.95,11H23V13H20.95C20.5,17.17 17.17,20.5 13,20.95V23H11V20.95C6.83,20.5 3.5,17.17 3.05,13Z" /></svg></a>`;
+             container.onclick = (e) => {
+                 e.preventDefault(); e.stopPropagation();
+                 if (currentLat && currentLng) map.setView([currentLat, currentLng], 16, { animate: true });
+                 else alert("現在地を取得中です...");
+             };
+             return container;
+         }
+     });
+     map.addControl(new HomeControl());
+   }
 
    const toggleFormBtn = document.getElementById("toggleFormBtn");
    const closeFormBtn = document.getElementById("closeFormBtn");
@@ -602,6 +628,21 @@
    window.onload = () => {
        // 1. まず認証情報をURLからチェック
        handleAuthRedirect();
+
+             // 1.5 sessionStorage のトークンがあればUIを復元
+             if (idToken) {
+                 try {
+                     const payload = parseJwt(idToken);
+                     const name = payload['cognito:username'] || payload['email'] || "(unknown)";
+                     document.getElementById("loginBtn").style.display = "none";
+                     document.getElementById("logoutBtn").style.display = "inline-block";
+                     document.getElementById("loginStatus").innerText = `ログイン中: ${name}`;
+                     sendBtn.disabled = false;
+                     sendBtn.innerText = "投稿する";
+                 } catch (e) {
+                     console.warn("Failed to parse stored idToken", e);
+                 }
+             }
        
        // 2. もしログイン済み（idTokenがある）なら、投稿を取得しに行く
        if (idToken) {
