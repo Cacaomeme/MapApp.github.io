@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BeReal風マップ - ホーム</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; }
+        
+        /* 地図 */
+        #map { height: 100vh; width: 100%; z-index: 1; }
+
+        /* ログアウトボタン */
+        #logout-btn {
+            position: absolute; top: 10px; right: 10px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.9); padding: 5px 10px; border: 1px solid #ccc; cursor: pointer; border-radius: 4px;
+        }
+
+        /* ★変更1: 右下の丸い投稿ボタン (Floating Action Button) */
+        #fab-btn {
+            position: fixed; bottom: 20px; right: 20px;
+            width: 60px; height: 60px;
+            background-color: #1DA1F2; /* ツイッターっぽい青 */
+            color: white; border-radius: 50%;
+            font-size: 30px; border: none;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            cursor: pointer; z-index: 2000; /* 地図より手前に */
+            display: flex; justify-content: center; align-items: center;
+        }
+        #fab-btn:active { transform: scale(0.95); }
+
+        /* ★変更2: 背景を暗くする幕 (オーバーレイ) */
+        #overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.5); /* 半透明の黒 */
+            z-index: 3000; display: none; /* 最初は隠す */
+        }
+
+        /* ★変更3: 投稿フォーム (画面中央に浮かぶ) */
+        #post-area {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 85%; max-width: 400px;
+            background: white; padding: 20px; border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            z-index: 3001; /* オーバーレイより手前に */
+            display: none; /* 最初は隠す */
+            text-align: center;
+        }
+
+        /* フォーム内の要素 */
+        #post-area input, #post-area button { margin: 8px 0; width: 100%; box-sizing: border-box; padding: 10px; }
+        .close-btn { background-color: #ccc; color: black; margin-top: 5px; }
+        .post-btn { background-color: #1DA1F2; color: white; font-weight: bold; }
+        
+    </style>
+</head>
+<body>
+
+    <button id="logout-btn" onclick="logout()">ログアウト</button>
+
+    <div id="map"></div>
+
+    <button id="fab-btn" onclick="openModal()">＋</button>
+
+    <div id="overlay" onclick="closeModal()"></div>
+
+    <div id="post-area">
+        <h3>投稿を作成</h3>
+        <p id="welcome-msg" style="font-size:12px; color:gray;"></p>
+        
+        <input type="text" id="message" placeholder="いま何してる？">
+        <input type="file" id="fileInput">
+        
+        <div style="display:flex; gap:5px;">
+            <input type="number" id="lat" placeholder="緯度" value="35.6895" step="0.0001">
+            <input type="number" id="lng" placeholder="経度" value="139.6917" step="0.0001">
+        </div>
+        
+        <button onclick="getLocation()" style="background-color: #f0f0f0; color: #333; border: 1px solid #ddd;">📍 現在地を取得</button>
+        <button class="post-btn" onclick="doPost()">投稿する</button>
+        <button class="close-btn" onclick="closeModal()">キャンセル</button>
+    </div>
+
+    <script>
+        // ★★★ あなたのAPI Gateway URL (/posts) に書き換えてください ★★★
+        const API_URL = "https://lur60pqr50.execute-api.us-east-1.amazonaws.com/dev/posts";
+
+        const myUserId = localStorage.getItem("myUserID");
+        if (!myUserId) window.location.href = "login.html";
+        document.getElementById("welcome-msg").innerText = "ID: " + myUserId;
+
+        // --- モーダル開閉の処理 ---
+        function openModal() {
+            document.getElementById("overlay").style.display = "block";
+            document.getElementById("post-area").style.display = "block";
+        }
+        function closeModal() {
+            document.getElementById("overlay").style.display = "none";
+            document.getElementById("post-area").style.display = "none";
+        }
+        // ------------------------
+
+        // 地図処理
+        const map = L.map('map').setView([35.6895, 139.6917], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        async function loadPosts() {
+            try {
+                const res = await fetch(API_URL);
+                const data = await res.json();
+                
+                data.forEach(post => {
+                    const lat = post.Latitude;
+                    const lng = post.Longitude;
+                    let dateStr = "日時不明";
+                    if (post.Timestamp) {
+                        const ts = parseInt(post.Timestamp); 
+                        if (!isNaN(ts)) dateStr = new Date(ts * 1000).toLocaleString('ja-JP');
+                    } else if (post.Date) {
+                        dateStr = post.Date;
+                    }
+
+                    L.marker([lat, lng]).addTo(map)
+                        .bindPopup(`
+                            <b>${post.UserID}</b><br>
+                            <small>${dateStr}</small><br>
+                            ${post.Message}<br>
+                            <img src="${post.ImageURL}" width="150">
+                        `);
+                });
+            } catch(e) { console.error("読み込みエラー", e); }
+        }
+        loadPosts();
+
+        // 現在地取得
+        function getLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    document.getElementById('lat').value = position.coords.latitude;
+                    document.getElementById('lng').value = position.coords.longitude;
+                    alert("現在地を取得しました！");
+                }, () => { alert("位置情報の取得に失敗しました"); });
+            } else { alert("GPS非対応です"); }
+        }
+
+        // 投稿処理
+        async function doPost() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            const msg = document.getElementById('message').value;
+            const lat = document.getElementById('lat').value;
+            const lng = document.getElementById('lng').value;
+
+            if (!file) { alert("画像を選んでください"); return; }
+            if (!msg) { alert("メッセージを入力してください"); return; }
+
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = async function() {
+                const base64Image = reader.result;
+
+                const postData = {
+                    UserID: myUserId,
+                    Message: msg,
+                    Latitude: lat,
+                    Longitude: lng,
+                    Image: base64Image
+                };
+
+                try {
+                    const res = await fetch(API_URL, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(postData)
+                    });
+                    
+                    if (res.ok) {
+                        alert("投稿しました！");
+                        closeModal(); // ★投稿成功したら閉じる
+                        location.reload(); 
+                    } else {
+                        const err = await res.json();
+                        alert("エラー: " + JSON.stringify(err));
+                    }
+                } catch(e) { alert("通信エラー: " + e); }
+            };
+        }
+
+        function logout() {
+            localStorage.removeItem("myUserID");
+            window.location.href = "login_cognito.html";
+        }
+    </script>
+</body>
+</html>

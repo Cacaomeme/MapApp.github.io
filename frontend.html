@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Redirecting...</title>
+  <script>
+    const to = new URL("front.html", location.href);
+    to.search = location.search;
+    to.hash = location.hash;
+    location.replace(to.toString());
+  </script>
+</head>
+<body>Redirecting...</body>
+</html>
+
+async function handleAuthRedirect() {
+  // codeフロー: ?code=... を見る
+  const qs = new URLSearchParams(location.search);
+  const code = qs.get("code");
+  const state = qs.get("state");
+
+  if (code) {
+    const expectedState = sessionStorage.getItem("pkce_state");
+    if (expectedState && state !== expectedState) {
+      throw new Error("state不一致（不正なリダイレクトの可能性）");
+    }
+
+    const tokens = await exchangeCodeForTokens(code);
+    if (tokens.id_token) {
+      idToken = tokens.id_token;
+      sessionStorage.setItem("idToken", idToken);
+    }
+
+    // URLを綺麗にする
+    history.replaceState(null, "", location.pathname);
+  }
+
+  // ここから下は、あなたの既存のUI更新（loginStatus/sendBtn有効化）を今まで通り実行
+  if (idToken) {
+    document.getElementById("loginBtn").style.display = "none";
+    document.getElementById("logoutBtn").style.display = "inline-block";
+
+    const payload = parseJwt(idToken);
+    const name = payload["cognito:username"] || payload["email"] || "Unknown";
+    document.getElementById("loginStatus").innerText = `ログイン中: ${name}`;
+
+    sendBtn.innerText = "投稿する";
+    sendBtn.disabled = false;
+  }
+}
+   /* =============================================================== */
+
+   let allPosts = [];      // 取得した全データを保持する配列
+   let currentPage = 1;    // 現在のページ番号
+   const postsPerPage = 5; // 1ページあたりの表示件数
+   let markersMap = {};    // マーカー管理用
+
+   /* ================= アプリ機能 ================= */
+
+   // 1. 全データ取得
+   async function fetchAllPosts() {
+       try {
+           // 読み込み自体は公開されている想定（必要ならheadersにAuthorizationを追加）
+           const res = await fetch(API_URL);
+           if (!res.ok) throw new Error("取得失敗");
+           const posts = await res.json();
+         
+           allPosts = posts.sort((a, b) => parseInt(b.Timestamp) - parseInt(a.Timestamp));
+           allPosts.forEach(post => addMarkerToMap(post));
+           displayPostList();
+       } catch (err) {
+           console.error(err);
+       }
+   }
+
+   // 2. 位置情報の取得
+   if (navigator.geolocation) {
+       navigator.geolocation.getCurrentPosition(pos => {
+           currentLat = pos.coords.latitude;
+           currentLng = pos.coords.longitude;
+           map.setView([currentLat, currentLng], 15);
+
+           L.circleMarker([currentLat, currentLng], {
+               radius: 15, fillColor: "#3388ff", color: "#ffffff",
+               weight: 5, opacity: 1, fillOpacity: 0.7
+           }).addTo(map);
+
+           // ログイン済みならボタン有効化
+           if (idToken) {
+               sendBtn.disabled = false;
+               sendBtn.innerText = "投稿する";
+           } else {
+               sendBtn.innerText = "ログインして投稿";
+           }
+           statusEl.textContent = "位置情報を取得しました！";
+       }, () => {
+           statusEl.textContent = "位置情報が取得できません。デフォルト位置を使用します。";
+       });
+   }
+
+   // 3. 画像処理
+   const processImage = (file) => new Promise((resolve) => {
+       const reader = new FileReader();
+       reader.readAsDataURL(file);
+       reader.onload = (e) => {
+       const img = new Image();
+       img.src = e.target.result;
+       img.onload = () => {
+           const maxWidth = 600;
+           const canvas = document.createElement('canvas');
+           const scale = maxWidth / img.width;
+           canvas.width = maxWidth;
+           canvas.height = img.height * scale;
+           const ctx = canvas.getContext('2d');
+           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+           resolve(canvas.toDataURL('image/jpeg', 0.7));
+       };
+       };
+   });
+
+   // 4. 投稿処理 (POST)
+   sendBtn.addEventListener("click", async () => {
+       // ログインチェック
+       if (!idToken) {
+           alert("ログインしてください");
+           login();
+           return;
+       }
+
+       const msg = document.getElementById("msg").value;
+       const file = document.getElementById("imageInput").files[0];
+
+       if (!msg || !file) return alert("メッセージと画像を入力してください");
+
+       sendBtn.disabled = true;
+       sendBtn.textContent = "送信中...";
+
+       try {
+           // トークンからユーザー情報を取得
+           const payload = parseJwt(idToken);
+           const uid = payload.sub; // ユーザーID
+           const uName = payload['cognito:username'] || payload['email'] || "Unknown"; // ユーザー名
+
+           const base64Img = await processImage(file);
+           
+           // Lambdaに送るデータ
+           const payloadData = {
+               UserID: uid,
+               UserName: uName, // ★追加: ユーザー名を送信
+               Message: msg,
+               Latitude: currentLat,
+               Longitude: currentLng,
+               Image: base64Img
+           };
+
+           const res = await fetch(API_URL, {
+               method: "POST",
+               headers: {
+                   "Content-Type": "application/json",
+                   "Authorization": idToken // 認証トークンを付与
+               },
+               body: JSON.stringify(payloadData)
+           });
+
+           if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+           const data = await res.json();
+           
+           // 新しい投稿オブジェクト (UserNameを含める)
+           const newPost = {
+               UserID: uid,
+               UserName: uName, // ★表示用に名前をセット
+               Message: msg,
+               Latitude: currentLat,
+               Longitude: currentLng,
+               ImageURL: data.url || base64Img,
+               Timestamp: Math.floor(Date.now() / 1000).toString()
+           };
+
+           allPosts.unshift(newPost);
+           addMarkerToMap(newPost);
+           currentPage = 1;
+           displayPostList();
+
+           // フォームリセット
+           messageForm.style.display = "none";
+           toggleFormBtn.textContent = "+";
+           document.getElementById("msg").value = "";
+           document.getElementById("imageInput").value = "";
+         
+           // 自分の投稿へ移動
+           const markerKey = newPost.UserID + newPost.Timestamp;
+           if (markersMap[markerKey]) {
+               map.setView([newPost.Latitude, newPost.Longitude], 16);
+               markersMap[markerKey].openPopup();
+           }
+
+       } catch (err) {
+           alert("エラー: " + err.message);
+       } finally {
+           sendBtn.disabled = false;
+           sendBtn.textContent = "投稿する";
+       }
+   });
+
+   /* --- 表示関連 --- */
+   function displayPostList() {
+       const list = document.getElementById("post-list");
+       list.innerHTML = "";
+       const startIndex = (currentPage - 1) * postsPerPage;
+       const endIndex = startIndex + postsPerPage;
+       const postsToShow = allPosts.slice(startIndex, endIndex);
+
+       postsToShow.forEach(post => {
+           const div = createPostItemElement(post);
+           list.appendChild(div);
+       });
+       
+       // ページネーション（簡易実装）
+       const pDiv = document.createElement("div");
+       pDiv.style.textAlign = "center";
+       pDiv.style.margin = "20px 0";
+       
+       const prev = document.createElement("button");
+       prev.textContent = "← 新しい投稿";
+       prev.disabled = currentPage === 1;
+       prev.onclick = () => { currentPage--; displayPostList(); window.scrollTo({top:500, behavior:'smooth'}); };
+       
+       const next = document.createElement("button");
+       next.textContent = "古い投稿 →";
+       next.disabled = endIndex >= allPosts.length;
+       next.onclick = () => { currentPage++; displayPostList(); window.scrollTo({top:500, behavior:'smooth'}); };
+
+       pDiv.appendChild(prev);
+       pDiv.innerHTML += " ";
+       pDiv.appendChild(next);
+       list.appendChild(pDiv);
+   }
+
+   function createPostItemElement(post) {
+       const div = document.createElement("div");
+       div.className = "post-item";
+       div.style.cursor = "pointer";
+       const dateStr = post.Timestamp ? new Date(parseInt(post.Timestamp) * 1000).toLocaleString("ja-JP") : "不明";
+       // 名前があれば名前、なければIDを表示
+       const displayName = post.UserName || post.UserID || "名無し";
+
+       div.innerHTML = `
+           <img src="${post.ImageURL}" class="post-img" onerror="this.src='https://via.placeholder.com/100?text=No+Image'">
+           <div class="post-content">
+           <div class="post-time">${dateStr}</div>
+           <strong>${displayName}</strong>: ${post.Message}
+           </div>
+       `;
+     
+       div.onclick = () => {
+           map.setView([post.Latitude, post.Longitude], 16, { animate: true, duration: 1.0 });
+           const markerKey = post.UserID + post.Timestamp;
+           if (markersMap[markerKey]) markersMap[markerKey].openPopup();
+           window.scrollTo({ top: 0, behavior: 'smooth' });
+       };
+       return div;
+   }
+
+   function addMarkerToMap(post) {
+       const hueShift = getHueRotation(post.UserID);
+       const dateStr = post.Timestamp ? new Date(parseInt(post.Timestamp) * 1000).toLocaleString("ja-JP") : "不明";
+       const displayName = post.UserName || post.UserID || "名無し"; // ★マップのポップアップも名前対応
+
+       const marker = L.marker([post.Latitude, post.Longitude]).addTo(map)
+           .bindPopup(`
+           <div class="popup-container">
+               <div class="post-time" style="margin-bottom:2px;">${dateStr}</div>
+               <strong>${displayName}</strong>
+               <div style="margin-top:5px; word-break:break-all;">${post.Message}</div>
+               <img src="${post.ImageURL}" class="popup-img" onerror="this.style.display='none'">
+           </div>
+           `);
+
+       marker.on('add', function() {
+           if (marker._icon) marker._icon.style.filter = `hue-rotate(${hueShift}deg)`;
+       });
+
+       const markerKey = post.UserID + post.Timestamp;
+       markersMap[markerKey] = marker;
+   }
+
+   function getHueRotation(str) {
+       if(!str) return 0;
+       let hash = 0;
+       for (let i = 0; i < str.length; i++) {
+           hash = str.charCodeAt(i) + ((hash << 5) - hash);
+       }
+       return Math.abs(hash) % 360;
+   }
+
+   /* --- UI制御その他 --- */
+   // 現在地へ戻るボタン
+   const HomeControl = L.Control.extend({
+       options: { position: 'topleft' },
+       onAdd: function (map) {
+           const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
+           container.innerHTML = `<a href="#" style="width:30px;height:30px;line-height:30px;display:block;text-align:center;background:white;"><svg viewBox="0 0 24 24" width="18" height="18" style="vertical-align:middle;"><path fill="currentColor" d="M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M3.05,13H1V11H3.05C3.5,6.83 6.83,3.5 11,3.05V1H13V3.05C17.17,3.5 20.5,6.83 20.95,11H23V13H20.95C20.5,17.17 17.17,20.5 13,20.95V23H11V20.95C6.83,20.5 3.5,17.17 3.05,13Z" /></svg></a>`;
+           container.onclick = (e) => {
+               e.preventDefault(); e.stopPropagation();
+               if (currentLat && currentLng) map.setView([currentLat, currentLng], 16, { animate: true });
+               else alert("現在地を取得中です...");
+           };
+           return container;
+       }
+   });
+   map.addControl(new HomeControl());
+
+   const toggleFormBtn = document.getElementById("toggleFormBtn");
+   const closeFormBtn = document.getElementById("closeFormBtn");
+   const messageForm = document.getElementById("messageForm");
+
+   toggleFormBtn.addEventListener("click", () => {
+       if (messageForm.style.display === "none") {
+           messageForm.style.display = "flex";
+           toggleFormBtn.textContent = "×";
+       } else {
+           messageForm.style.display = "none";
+           toggleFormBtn.textContent = "+";
+       }
+   });
+
+   closeFormBtn.addEventListener("click", () => {
+       messageForm.style.display = "none";
+       toggleFormBtn.textContent = "+";
+   });
+
+   /* 初期化 */
+   window.onload = async () => {
+  try {
+    await handleAuthRedirect(); // ログインリダイレクト処理
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = "ログイン処理でエラー: " + (e?.message ?? e);
+  }
+  fetchAllPosts(); // データ読み込み
+};
+</script>
+</body>
+</html>

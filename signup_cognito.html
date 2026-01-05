@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Cognito 新規登録</title>
+    <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1001.0.min.js"></script>
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.1/dist/amazon-cognito-identity.min.js"></script>
+</head>
+<body style="text-align:center; padding-top:50px;">
+    <h2>アカウント作成 (Cognito)</h2>
+    
+    <input type="text" id="username" placeholder="ユーザーID"><br><br>
+    <input type="password" id="password" placeholder="パスワード"><br><br>
+    <input type="email" id="email" placeholder="メールアドレス"><br><br>
+    
+    <button onclick="signUp()">登録する</button>
+    <br><br>
+    <a href="login_cognito.html">すでにアカウントをお持ちの方はこちら</a>
+
+    <script>
+        // デバッグ用: 画面が開かれたらログを出す
+        console.log("画面読み込み完了");
+
+        // ★あなたのIDを設定済み
+        const poolData = {
+            UserPoolId: 'us-east-1_3vVCLeEE8', 
+            ClientId: '699nvvn5huliol6o6msae5qs09' 
+        };
+
+        const userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+
+        function signUp() {
+            console.log("ボタンが押されました"); // これが出るか確認
+
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const email = document.getElementById('email').value;
+
+            const attributeList = [
+                new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })
+            ];
+
+            // 登録処理を実行
+            userPool.signUp(username, password, attributeList, null, function(err, result) {
+                if (err) {
+                    console.error("Cognitoエラー:", err); // コンソールに赤文字で出す
+                    alert("エラーが発生しました:\n" + err.message);
+                    return;
+                }
+                
+                // 成功
+                console.log("登録成功:", result);
+                alert('登録成功！ユーザー名: ' + result.user.getUsername());
+                // ログイン画面へ
+                window.location.href = "login_cognito.html";
+            });
+        }
+    </script>
+</body>
+</html>

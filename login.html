@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ログイン</title>
+</head>
+<body style="text-align:center; padding-top:50px;">
+    <h2>ログイン</h2>
+    <input type="text" id="userid" placeholder="ID"><br><br>
+    <input type="password" id="password" placeholder="パスワード"><br><br>
+    <button onclick="doLogin()">ログイン</button>
+    <p><a href="signup.html">新規登録はこちら</a></p>
+
+    <script>
+        // ★ここを書き換える (最後が /login)
+        const URL = "https://lur60pqr50.execute-api.us-east-1.amazonaws.com/dev/login";
+
+        async function doLogin() {
+            const uid = document.getElementById("userid").value;
+            const pass = document.getElementById("password").value;
+
+            try {
+                const res = await fetch(URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ UserID: uid, Password: pass })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    // ★重要：IDを保存してメイン画面へ
+                    localStorage.setItem("myUserID", uid);
+                    alert("ログインしました！");
+                    window.location.href = "main.html"; 
+                } else {
+                    alert("失敗: " + data.message);
+                }
+            } catch(e) { console.error(e); alert("通信エラー"); }
+        }
+    </script>
+</body>
+</html>

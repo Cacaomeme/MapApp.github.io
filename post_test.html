@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>投稿機能テスト（位置情報付き）</title>
+  <style>
+      #status { color: blue; font-weight: bold; }
+      .error { color: red; }
+  </style>
+</head>
+<body>
+  <h2>投稿テスト画面</h2>
+   <p id="status">位置情報を取得中...</p>
+
+  <p>ユーザーID: <input type="text" id="userid" value="test_user"></p>
+  <p>メッセージ: <input type="text" id="message" value="テスト投稿です"></p>
+ 
+  <p>緯度: <input type="number" id="lat" step="any" readonly></p>
+  <p>経度: <input type="number" id="lng" step="any" readonly></p>
+ 
+  <p>画像: <input type="file" id="fileInput"></p>
+   <button id="submitBtn" onclick="uploadData()" disabled>投稿する</button>
+
+  <script>
+      const url = "https://lur60pqr50.execute-api.us-east-1.amazonaws.com/dev/posts";
+      const statusEl = document.getElementById('status');
+      const latInput = document.getElementById('lat');
+      const lngInput = document.getElementById('lng');
+      const submitBtn = document.getElementById('submitBtn');
+
+      /* ========= 1. ページ読み込み時に位置情報を取得 ========= */
+      window.onload = function() {
+          if ("geolocation" in navigator) {
+              navigator.geolocation.getCurrentPosition(
+                  (position) => {
+                      latInput.value = position.coords.latitude;
+                      lngInput.value = position.coords.longitude;
+                     
+                      statusEl.textContent = "✅ 位置情報を取得しました。投稿可能です。";
+                      submitBtn.disabled = false; // ボタンを有効化
+                  },
+                  (error) => {
+                      let msg = "位置情報の取得に失敗しました";
+                      if (error.code === 1) msg = "❌ 位置情報の利用が拒否されました。設定を確認してください。";
+                      if (error.code === 3) msg = "❌ 取得タイムアウトです。ページを再読み込みしてください。";
+                     
+                      statusEl.textContent = msg;
+                      statusEl.className = "error";
+                      console.error(error);
+                  },
+                  {
+                      enableHighAccuracy: false,
+                      timeout: 30000,
+                      maximumAge: 3600000
+                  }
+              );
+          } else {
+              statusEl.textContent = "このブラウザは位置情報に対応していません";
+          }
+      };
+
+      /* ========= 2. 投稿処理（前回の修正を反映済み） ========= */
+      async function uploadData() {
+          const fileInput = document.getElementById('fileInput');
+          const file = fileInput.files[0];
+
+          if (!file) {
+              alert("画像を選択してください");
+              return;
+          }
+
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+
+          reader.onload = async function() {
+              const base64Image = reader.result;
+
+              const postData = {
+                  UserID: document.getElementById('userid').value, // DynamoDBに合わせ小文字
+                  Message: document.getElementById('message').value,
+                  Latitude: parseFloat(latInput.value),
+                  Longitude: parseFloat(lngInput.value),
+                  Image: base64Image
+              };
+
+              console.log("送信データ:", postData);
+
+              try {
+                  submitBtn.disabled = true;
+                  submitBtn.textContent = "送信中...";
+
+                  const response = await fetch(url, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(postData)
+                  });
+
+                  const result = await response.json();
+                
+                  if (response.ok) {
+                      alert("成功！S3とDynamoDBを確認してください。");
+                      console.log("成功レスポンス:", result);
+                  } else {
+                      // ここで 502 や 500 のエラー内容が分かります
+                      alert("サーバー側エラー: " + JSON.stringify(result));
+                  }
+
+              } catch (error) {
+                  console.error("通信エラー:", error);
+                  alert("通信エラーが発生しました。");
+              } finally {
+                  submitBtn.disabled = false;
+                  submitBtn.textContent = "投稿する";
+              }
+          };
+      }
+  </script>
+</body>
+</html>
