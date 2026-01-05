@@ -255,7 +255,8 @@
          sendBtn.disabled = false;
          sendBtn.innerText = "投稿する";
      } else {
-         sendBtn.disabled = true;
+         // disabled だとクリックイベントが発火しないため、未ログインでも押せるようにする
+         sendBtn.disabled = false;
          sendBtn.innerText = "ログインして投稿";
      }
 
@@ -292,7 +293,8 @@
          document.getElementById("loginBtn").style.display = "inline-block";
          document.getElementById("logoutBtn").style.display = "none";
          document.getElementById("loginStatus").innerText = "未ログイン（投稿にはログインが必要です）";
-         sendBtn.disabled = true;
+         // 未ログインでも「ログインして投稿」を押してログイン画面へ遷移できるようにする
+         sendBtn.disabled = false;
          sendBtn.innerText = "ログインして投稿";
          document.getElementById("post-list").innerHTML = "<p style='text-align:center; padding:20px;'>投稿を見るにはログインしてください。</p>";
 
@@ -492,6 +494,8 @@
                sendBtn.disabled = false;
                sendBtn.innerText = "投稿する";
            } else {
+               // 未ログインでもクリックできるようにする（クリックで login() に飛ぶ）
+               sendBtn.disabled = false;
                sendBtn.innerText = "ログインして投稿";
            }
            statusEl.textContent = "位置情報を取得しました！";
