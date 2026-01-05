@@ -284,8 +284,33 @@
    }
 
    function logout() {
-     const url = `${COGNITO_DOMAIN}/logout?client_id=${CLIENT_ID}&logout_uri=${encodeURIComponent(REDIRECT_URI)}`;
-     window.location.href = url;
+         // まずローカルのログイン状態を必ずクリア（Cognito側のログアウトに失敗してもUIが残らないように）
+         try { sessionStorage.removeItem("idToken"); } catch (_) {}
+         idToken = null;
+
+         // UI更新
+         document.getElementById("loginBtn").style.display = "inline-block";
+         document.getElementById("logoutBtn").style.display = "none";
+         document.getElementById("loginStatus").innerText = "未ログイン（投稿にはログインが必要です）";
+         sendBtn.disabled = true;
+         sendBtn.innerText = "ログインして投稿";
+         document.getElementById("post-list").innerHTML = "<p style='text-align:center; padding:20px;'>投稿を見るにはログインしてください。</p>";
+
+         // 地図上の投稿ピン等をクリア
+         allPosts = [];
+         markersMap = {};
+         if (map && window.L) {
+             map.eachLayer((layer) => {
+                 if (layer instanceof L.Marker || layer instanceof L.CircleMarker) {
+                     map.removeLayer(layer);
+                 }
+             });
+             // ベースタイルは残す（tileLayerはMarker/CircleMarkerではない）
+         }
+
+         // Cognitoのセッションも切る（Sign-out URL に REDIRECT_URI を登録している必要あり）
+         const url = `${COGNITO_DOMAIN}/logout?client_id=${CLIENT_ID}&logout_uri=${encodeURIComponent(REDIRECT_URI)}`;
+         window.location.href = url;
    }
 
    function handleAuthRedirect() {
@@ -382,7 +407,41 @@
            if (!res.ok) throw new Error("取得失敗");
            
            const posts = await res.json();
-           
+
+           // ★追加: 「自分が24時間以内に投稿しているか」をクライアント側でも判定
+           // （バックエンドが常に403を返すとは限らないため、表示側でブロック）
+           if (myUserId) {
+               const nowSec = Math.floor(Date.now() / 1000);
+               const limitSec = 24 * 60 * 60;
+               const hasRecentPost = Array.isArray(posts) && posts.some((p) => {
+                   const uid = p?.UserID ?? p?.userId ?? p?.userID;
+                   const tsRaw = p?.Timestamp ?? p?.timestamp ?? p?.TS ?? null;
+                   const ts = typeof tsRaw === "string" ? parseInt(tsRaw, 10) : (typeof tsRaw === "number" ? tsRaw : NaN);
+                   return uid === myUserId && Number.isFinite(ts) && (nowSec - ts) <= limitSec;
+               });
+
+               if (!hasRecentPost) {
+                   document.getElementById("post-list").innerHTML = `
+                       <div style="text-align:center; padding:30px; background:#fff3cd; border:1px solid #ffeeba; border-radius:8px;">
+                           <h3 style="color:#856404;">🔒 閲覧制限</h3>
+                           <p>マップを見るには、24時間以内に1回以上投稿する必要があります。</p>
+                           <p>まずは「＋」ボタンから投稿してみましょう！</p>
+                       </div>
+                   `;
+
+                   allPosts = [];
+                   markersMap = {};
+                   if (map && window.L) {
+                       map.eachLayer((layer) => {
+                           if (layer instanceof L.Marker || layer instanceof L.CircleMarker) {
+                               map.removeLayer(layer);
+                           }
+                       });
+                   }
+                   return;
+               }
+           }
+
            allPosts = posts.sort((a, b) => parseInt(b.Timestamp) - parseInt(a.Timestamp));
 
            // ★変更: いったん地図上のピンを全削除して再描画（重複防止）
